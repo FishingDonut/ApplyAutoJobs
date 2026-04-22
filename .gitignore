@@ -1,0 +1,25 @@
+# Ambientes Virtuais
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Dados da Automação (Sessões e Cookies)
+.sessao_gupy/
+
+# Configurações Pessoais e Segredos
+.env
+perfil.json
+prompt.txt
+
+# Banco de Dados Local e Histórico
+vagas_central.csv
+historico_candidaturas.csv
+vagas_encontradas.csv
+
+# Arquivos Gerados
+meus_curriculos/
+
+# IDEs
+.idea/
+.vscode/

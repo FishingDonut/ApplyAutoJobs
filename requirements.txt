@@ -1,0 +1,8 @@
+google-genai
+python-docx
+docxtpl
+python-dotenv
+pandas
+python-jobspy
+playwright
+pytest-playwright
