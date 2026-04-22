@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobspy-ai"
+version = "0.1.0"
+description = "AI-powered Job Search and Application CLI"
+dependencies = [
+    "google-genai",
+    "python-docx",
+    "docxtpl",
+    "python-dotenv",
+    "pandas",
+    "python-jobspy",
+    "playwright",
+    "sqlmodel",
+    "pymysql",
+    "cryptography",
+    "typer[all]",
+    "rich",
+    "textual"
+]
+
+[tool.setuptools]
+packages = ["jobspy_ai"]
+
+[project.scripts]
+jobspy = "jobspy_ai.cli:app"

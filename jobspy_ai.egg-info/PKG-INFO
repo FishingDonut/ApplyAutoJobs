@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: jobspy-ai
+Version: 0.1.0
+Summary: AI-powered Job Search and Application CLI
+Requires-Dist: google-genai
+Requires-Dist: python-docx
+Requires-Dist: docxtpl
+Requires-Dist: python-dotenv
+Requires-Dist: pandas
+Requires-Dist: python-jobspy
+Requires-Dist: playwright
+Requires-Dist: sqlmodel
+Requires-Dist: pymysql
+Requires-Dist: cryptography
+Requires-Dist: typer[all]
+Requires-Dist: rich
+Requires-Dist: textual

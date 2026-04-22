@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+jobspy_ai/__init__.py
+jobspy_ai/cli.py
+jobspy_ai.egg-info/PKG-INFO
+jobspy_ai.egg-info/SOURCES.txt
+jobspy_ai.egg-info/dependency_links.txt
+jobspy_ai.egg-info/entry_points.txt
+jobspy_ai.egg-info/requires.txt
+jobspy_ai.egg-info/top_level.txt
