@@ -65,6 +65,13 @@ def list(limit: int = 10):
         console.print(table)
 
 @app.command()
+def dashboard():
+    """Abre o painel interativo (TUI) para gerenciar vagas."""
+    from .tui.dashboard import JobSpyDashboard
+    dashboard_app = JobSpyDashboard()
+    dashboard_app.run()
+
+@app.command()
 def apply(vaga_id: int):
     """Adapta o currículo e tenta aplicar para uma vaga via ID."""
     with get_session() as session:
