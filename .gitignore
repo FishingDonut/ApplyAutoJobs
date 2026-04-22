@@ -23,3 +23,6 @@ meus_curriculos/
 # IDEs
 .idea/
 .vscode/
+
+#gemini
+/GEMINI.md
