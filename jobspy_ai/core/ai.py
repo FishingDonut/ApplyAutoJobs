@@ -22,10 +22,11 @@ class GeminiEngine:
                 return f.read()
         return "Você é um especialista em recrutamento e seleção."
 
-    def call_with_retry(self, prompt, max_retries=3):
-        time.sleep(2)
+    def call_with_retry(self, prompt, max_retries=2):
         for i in range(max_retries):
             try:
+                # Delay básico para não estourar RPM gratuito
+                time.sleep(3) 
                 response = self.client.models.generate_content(
                     model=MODELO,
                     contents=prompt,
@@ -33,11 +34,16 @@ class GeminiEngine:
                 )
                 return response.text.strip()
             except Exception as e:
-                if "429" in str(e):
-                    time.sleep(10)
+                err_msg = str(e).lower()
+                if "429" in err_msg or "quota" in err_msg:
+                    print(f"   [!] Cota do Gemini atingida. Aguardando reset (tentativa {i+1})...")
+                    time.sleep(15)
                     continue
-                time.sleep(5)
-        raise Exception("Falha na API do Gemini após múltiplas tentativas.")
+                print(f"   [!] Erro na API Gemini: {e}")
+                time.sleep(2)
+        
+        # Em vez de levantar exceção e travar o app, retornamos um sinal de erro controlado
+        return None
 
     def adaptar_curriculo(self, vaga_desc, curriculo_base):
         prompt = f"""
@@ -47,7 +53,7 @@ class GeminiEngine:
         Retorne JSON: {{ 'analise': {{ 'keywords': [] }}, 'adaptacao': {{ 'summary': '', 'skills': '', 'highlights': '', 'exp_1_desc': '', 'exp_2_desc': '' }} }}
         """
         raw = self.call_with_retry(prompt)
-        return self._limpar_json(raw)
+        return self._limpar_json(raw) if raw else None
 
     def analisar_vaga(self, vaga_desc, perfil_usuario):
         prompt = f"""
@@ -68,9 +74,11 @@ class GeminiEngine:
         }}
         """
         raw = self.call_with_retry(prompt)
-        return self._limpar_json(raw)
+        return self._limpar_json(raw) if raw else None
 
     def _limpar_json(self, texto):
+        if not texto:
+            return None
         texto = texto.replace("```json", "").replace("```", "").strip()
         start = texto.find('{')
         end = texto.rfind('}') + 1

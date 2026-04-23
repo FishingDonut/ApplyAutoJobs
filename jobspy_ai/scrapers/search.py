@@ -74,12 +74,20 @@ def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True
                 print(f"   [IA] Analisando match: {titulo[:30]}...")
                 site_origem = "Gupy" if "gupy.io" in str(link).lower() else "LinkedIn" if "linkedin.com" in str(link).lower() else "Indeed"
                 
-                # Inteligência Artificial
+                # Inteligência Artificial - Agora resiliente a falhas
                 analise_raw = ai.analisar_vaga(descricao, perfil_data)
-                try:
-                    analise = json.loads(analise_raw)
-                except:
-                    analise = {"match_score": 0, "tech_stack": "", "salario_estimado": "Erro", "justificativa": ""}
+                if analise_raw:
+                    try:
+                        analise = json.loads(analise_raw)
+                    except:
+                        analise = {"match_score": 0, "tech_stack": "", "salario_estimado": "Erro", "justificativa": "Falha no parse do JSON da IA."}
+                else:
+                    analise = {
+                        "match_score": 0, 
+                        "tech_stack": "N/A", 
+                        "salario_estimado": "N/A", 
+                        "justificativa": "Análise pendente (Cota de IA atingida)."
+                    }
 
                 vaga = Vaga(
                     titulo=titulo,
