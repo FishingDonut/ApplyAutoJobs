@@ -1,10 +1,11 @@
 import typer
 import json
 import os
+import click
 from rich.console import Console
 from rich.table import Table
 from .db.database import create_db_and_tables, get_session
-from .db.models import Vaga
+from .db.models import Vaga, Perfil
 from .db.migrate_csv import migrate as run_migration
 from .scrapers.search import search_and_save
 from .core.ai import GeminiEngine
@@ -18,6 +19,7 @@ console = Console()
 
 TEMPLATE_PATH = "templates/template-2.0.docx"
 OUTPUT_DIR = "meus_curriculos"
+PROFILE_PATH = "perfil.json"
 
 @app.command()
 def setup():
@@ -70,6 +72,48 @@ def dashboard():
     from .tui.dashboard import JobSpyDashboard
     dashboard_app = JobSpyDashboard()
     dashboard_app.run()
+
+@app.command()
+def profile():
+    """Abre o perfil no seu editor padrão para edição rápida e segura."""
+    if not os.path.exists(PROFILE_PATH):
+        default_profile = {
+            "nome": "Seu Nome",
+            "email": "seu@email.com",
+            "telefone": "(00) 00000-0000",
+            "linkedin": "https://linkedin.com/in/seu-perfil",
+            "resumo": "Escreva aqui seu resumo profissional...",
+            "skills": "Python, React, etc.",
+            "exp_1": "Experiência recente...",
+            "exp_2": "Experiência anterior..."
+        }
+        with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(default_profile, f, indent=4, ensure_ascii=False)
+    
+    console.print(f"[yellow]Abrindo {PROFILE_PATH} no seu editor padrão...[/yellow]")
+    # click.edit abre o editor padrão e espera fechar
+    click.edit(filename=PROFILE_PATH)
+    
+    # Sincronizar com o Banco de Dados após a edição
+    try:
+        with open(PROFILE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        with get_session() as session:
+            # Tenta sincronizar com a tabela Perfil
+            profile_db = session.query(Perfil).first()
+            if not profile_db:
+                profile_db = Perfil(nome=data.get("nome", "Usuário"), json_data=json.dumps(data, ensure_ascii=False))
+            else:
+                profile_db.nome = data.get("nome", profile_db.nome)
+                profile_db.json_data = json.dumps(data, ensure_ascii=False)
+            
+            session.add(profile_db)
+            session.commit()
+            
+        console.print("[bold green]✅ Perfil editado e sincronizado com o Banco de Dados![/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]❌ Erro ao ler ou sincronizar o perfil: {e}[/bold red]")
 
 @app.command()
 def apply(vaga_id: int):
