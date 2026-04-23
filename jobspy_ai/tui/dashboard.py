@@ -1,11 +1,13 @@
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, Container
-from textual.widgets import Header, Footer, ListItem, ListView, Static, Markdown, Label
+from textual.widgets import Header, Footer, ListItem, ListView, Static, Markdown, Label, RichLog
 from textual.binding import Binding
 from sqlmodel import select
 from ..db.database import get_session
 from ..db.models import Vaga
 import webbrowser
+import threading
+import os
 
 class JobDetail(Static):
     """Widget para exibir os detalhes da vaga."""
@@ -18,6 +20,8 @@ class JobDetail(Static):
         content += f"**💰 Salário:** {vaga.salario_estimado or 'Não informado'}\n\n"
         content += f"**💡 Justificativa:** {vaga.justificativa or 'Sem análise.'}\n\n"
         content += "---\n"
+        if vaga.arquivo_curriculo:
+            content += f"**📄 Currículo Gerado:** `{vaga.arquivo_curriculo}`\n\n"
         content += f"**Status:** {vaga.status} | **Data:** {vaga.data_descoberta.strftime('%d/%m/%Y')}\n"
         content += vaga.descricao or "Sem descrição disponível."
         self.query_one(Markdown).update(content)
@@ -34,14 +38,19 @@ class JobListItem(ListItem):
         yield Label(f"[{status_color}]{self.vaga.status:12}[/] [{match_color}]{self.vaga.match_score:3}%[/] [b]{self.vaga.titulo:40}[/] @ {self.vaga.empresa}")
 
 class JobSpyDashboard(App):
-    """Aplicativo TUI principal."""
+    """Aplicativo TUI principal com Logs em tempo real."""
     TITLE = "JobSpy AI Dashboard"
     CSS = """
     Screen {
         background: #1e1e1e;
     }
     #main-container {
-        height: 100%;
+        height: 70%;
+    }
+    #log-container {
+        height: 30%;
+        border-top: tall #333;
+        background: #121212;
     }
     #job-list {
         width: 40%;
@@ -54,15 +63,8 @@ class JobSpyDashboard(App):
         height: 100%;
         padding: 1 2;
     }
-    ListItem {
-        padding: 0 1;
-    }
-    ListItem:hover {
-        background: #333;
-    }
-    ListView > ListItem.--highlight {
-        background: #005faf;
-        color: white;
+    RichLog {
+        color: #00ff00;
     }
     """
 
@@ -81,10 +83,17 @@ class JobSpyDashboard(App):
                 yield ListView(id="job-list")
                 with Vertical(id="job-detail"):
                     yield Markdown(id="detail-markdown")
+        with Container(id="log-container"):
+            yield Label(" [bold yellow]CONSOLE DE LOGS EM TEMPO REAL[/]")
+            yield RichLog(id="app-logs", highlight=True, markup=True)
         yield Footer()
 
     def on_mount(self) -> None:
         self.action_refresh()
+        self.log_message("[bold green]Sistema pronto! Escolha uma vaga e pressione 'A' para aplicar.[/]")
+
+    def log_message(self, message: str):
+        self.query_one("#app-logs", RichLog).write(message)
 
     def action_refresh(self) -> None:
         """Carrega as vagas do banco de dados MySQL."""
@@ -108,19 +117,17 @@ class JobSpyDashboard(App):
 
     def update_detail(self, vaga: Vaga) -> None:
         md = self.query_one("#detail-markdown", Markdown)
-        
         match_color = "green" if vaga.match_score >= 80 else "yellow" if vaga.match_score >= 50 else "red"
         
         content = f"# {vaga.titulo}\n\n"
         content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n\n"
-        
         content += f"### 📊 Análise de Match: [{match_color}]{vaga.match_score}%[/]\n"
         content += f"**🛠️ Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
         content += f"**💰 Salário:** {vaga.salario_estimado or 'Não informado'}\n\n"
-        
         content += f"**💡 Justificativa:** {vaga.justificativa or 'Sem análise.'}\n\n"
-        
         content += "---\n"
+        if vaga.arquivo_curriculo:
+            content += f"**📄 Currículo Gerado:** `{vaga.arquivo_curriculo}`\n\n"
         content += f"**Status:** {vaga.status} | **Data:** {vaga.data_descoberta.strftime('%d/%m/%Y')}\n\n"
         content += vaga.descricao or "Sem descrição disponível."
         md.update(content)
@@ -139,15 +146,34 @@ class JobSpyDashboard(App):
                 db_vaga.status = "Ignorada"
                 session.add(db_vaga)
                 session.commit()
-            self.notify(f"Vaga '{vaga.titulo}' ignorada.")
+            self.log_message(f"[yellow]Vaga '{vaga.titulo}' ignorada.[/]")
             self.action_refresh()
 
     def action_apply_job(self) -> None:
         list_view = self.query_one("#job-list", ListView)
         if list_view.highlighted_child:
-            vaga_id = list_view.highlighted_child.vaga.id
-            self.notify(f"Iniciando aplicação para ID {vaga_id}... Feche o Dashboard para ver os logs.")
+            vaga = list_view.highlighted_child.vaga
+            # Rodar aplicação em uma thread separada para não travar a TUI
+            thread = threading.Thread(target=self.run_apply_process, args=(vaga.id,))
+            thread.start()
 
-if __name__ == "__main__":
-    app = JobSpyDashboard()
-    app.run()
+    def run_apply_process(self, vaga_id: int):
+        from ..cli import apply
+        from rich.console import Console
+        import io
+        from contextlib import redirect_stdout
+
+        self.log_message(f"[bold blue]Iniciando aplicação para ID {vaga_id}...[/]")
+        
+        # Captura o output do comando CLI para mostrar no log da TUI
+        f = io.StringIO()
+        try:
+            with redirect_stdout(f):
+                # Importamos aqui para evitar circular import
+                from ..cli import apply_logic
+                apply_logic(vaga_id, logger=self.log_message)
+            
+            self.app.call_from_thread(self.action_refresh)
+            self.log_message("[bold green]✅ Processo finalizado![/]")
+        except Exception as e:
+            self.log_message(f"[bold red]❌ Erro no processo: {e}[/]")

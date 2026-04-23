@@ -10,9 +10,11 @@ from .db.migrate_csv import migrate as run_migration
 from .scrapers.search import search_and_save
 from .core.ai import GeminiEngine
 from .bots.gupy import GupyBot
+from .bots.linkedin import LinkedInBot
 from sqlmodel import select
 from docxtpl import DocxTemplate
 from docx import Document
+import time
 
 app = typer.Typer(help="JobSpy AI - Assistente de Carreira no Terminal")
 console = Console()
@@ -21,156 +23,139 @@ TEMPLATE_PATH = "templates/template-2.0.docx"
 OUTPUT_DIR = "meus_curriculos"
 PROFILE_PATH = "perfil.json"
 
-@app.command()
-def setup():
-    """Inicializa o banco de dados MySQL."""
-    console.print("[yellow]Inicializando banco de dados...[/yellow]")
-    create_db_and_tables()
-    console.print("[green]Banco de dados pronto![/green]")
+# --- LÓGICA COMPARTILHADA (CLI + TUI) ---
 
-@app.command()
-def migrate():
-    """Migra os dados do antigo vagas_central.csv para o MySQL."""
-    console.print("[yellow]Iniciando migração de CSV para MySQL...[/yellow]")
-    run_migration()
+def apply_logic(vaga_id: int, logger=None):
+    """Lógica centralizada de aplicação para ser usada pela CLI e pela TUI."""
+    def log(msg):
+        if logger: logger(msg)
+        else: console.print(msg)
 
-@app.command()
-def search(
-    termo: str = typer.Argument(..., help="Termo de busca (ex: 'Programador React')"),
-    local: str = typer.Option("remoto", help="Localização da vaga"),
-    remoto: bool = typer.Option(True, help="Se a vaga deve ser remota"),
-    limite: int = typer.Option(20, help="Limite de vagas para buscar")
-):
-    """Busca novas vagas e as salva no banco de dados."""
-    setup()
-    console.print(f"[bold blue]Buscando vagas para: {termo}...[/bold blue]")
-    novas = search_and_save(termo, local, remoto, limite)
-    console.print(f"[bold green]Sucesso![/bold green] {novas} novas vagas encontradas.")
-
-@app.command()
-def list(limit: int = 10):
-    """Lista as últimas vagas salvas no banco de dados com análise de match."""
-    with get_session() as session:
-        statement = select(Vaga).order_by(Vaga.data_descoberta.desc()).limit(limit)
-        vagas = session.exec(statement).all()
-        
-        table = Table(title="Últimas Vagas Encontradas")
-        table.add_column("ID", style="cyan")
-        table.add_column("Título", style="magenta")
-        table.add_column("Empresa", style="green")
-        table.add_column("Match (%)", style="bold yellow")
-        table.add_column("Tech Stack", style="blue")
-        table.add_column("Salário", style="green")
-        table.add_column("Status", style="white")
-        
-        for v in vagas:
-            score = v.match_score or 0
-            match_style = "bold green" if score >= 80 else "bold yellow" if score >= 50 else "red"
-            table.add_row(
-                str(v.id), 
-                v.titulo, 
-                v.empresa, 
-                f"[{match_style}]{score}%[/]", 
-                v.tech_stack or "-",
-                v.salario_estimado or "-",
-                v.status
-            )
-        
-        console.print(table)
-
-@app.command()
-def dashboard():
-    """Abre o painel interativo (TUI) para gerenciar vagas."""
-    from .tui.dashboard import JobSpyDashboard
-    dashboard_app = JobSpyDashboard()
-    dashboard_app.run()
-
-@app.command()
-def profile():
-    """Abre o perfil no seu editor padrão para edição rápida e segura."""
-    if not os.path.exists(PROFILE_PATH):
-        default_profile = {
-            "nome": "Seu Nome",
-            "email": "seu@email.com",
-            "telefone": "(00) 00000-0000",
-            "linkedin": "https://linkedin.com/in/seu-perfil",
-            "resumo": "Escreva aqui seu resumo profissional...",
-            "skills": "Python, React, etc.",
-            "exp_1": "Experiência recente...",
-            "exp_2": "Experiência anterior..."
-        }
-        with open(PROFILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(default_profile, f, indent=4, ensure_ascii=False)
-    
-    console.print(f"[yellow]Abrindo {PROFILE_PATH} no seu editor padrão...[/yellow]")
-    # click.edit abre o editor padrão e espera fechar
-    click.edit(filename=PROFILE_PATH)
-    
-    # Sincronizar com o Banco de Dados após a edição
-    try:
-        with open(PROFILE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        with get_session() as session:
-            # Tenta sincronizar com a tabela Perfil
-            profile_db = session.query(Perfil).first()
-            if not profile_db:
-                profile_db = Perfil(nome=data.get("nome", "Usuário"), json_data=json.dumps(data, ensure_ascii=False))
-            else:
-                profile_db.nome = data.get("nome", profile_db.nome)
-                profile_db.json_data = json.dumps(data, ensure_ascii=False)
-            
-            session.add(profile_db)
-            session.commit()
-            
-        console.print("[bold green]✅ Perfil editado e sincronizado com o Banco de Dados![/bold green]")
-    except Exception as e:
-        console.print(f"[bold red]❌ Erro ao ler ou sincronizar o perfil: {e}[/bold red]")
-
-@app.command()
-def apply(vaga_id: int):
-    """Adapta o currículo e tenta aplicar para uma vaga via ID."""
     with get_session() as session:
         vaga = session.get(Vaga, vaga_id)
         if not vaga:
-            console.print(f"[bold red]Vaga ID {vaga_id} não encontrada![/bold red]")
-            return
+            log(f"[bold red]Vaga ID {vaga_id} não encontrada![/bold red]")
+            return False
 
-        console.print(f"[yellow]Adaptando currículo para: {vaga.titulo} na {vaga.empresa}...[/yellow]")
+        log(f"[yellow]Adaptando currículo para: {vaga.titulo} na {vaga.empresa}...[/yellow]")
         
         # Extrair texto do template
+        if not os.path.exists(TEMPLATE_PATH):
+            log(f"[bold red]Template não encontrado em {TEMPLATE_PATH}[/bold red]")
+            return False
+
         doc_base = Document(TEMPLATE_PATH)
         texto_base = "\n".join([p.text for p in doc_base.paragraphs if p.text])
         
         # IA Adaptação
         ai = GeminiEngine()
         res_raw = ai.adaptar_curriculo(vaga.descricao, texto_base)
-        dados = json.loads(res_raw)
-        contexto = dados.get('adaptacao', {})
+        
+        if not res_raw:
+            log("[bold red]❌ A IA não retornou dados para adaptação.[/bold red]")
+            return False
+
+        try:
+            res_raw = res_raw.replace("```json", "").replace("```", "").strip()
+            dados = json.loads(res_raw)
+            contexto = dados.get('adaptacao', {})
+        except Exception as e:
+            log(f"[bold red]❌ Erro no JSON da IA: {e}[/bold red]")
+            return False
         
         # Salvar Docx
         if not os.path.exists(OUTPUT_DIR): os.makedirs(OUTPUT_DIR)
-        nome_arq = f"{vaga_id}_{vaga.empresa}.docx".replace(" ", "_")
-        caminho_final = os.path.join(OUTPUT_DIR, nome_arq)
+        nome_arq = f"{vaga_id}_{vaga.empresa.replace(' ', '_')}.docx"
+        caminho_final = os.path.abspath(os.path.join(OUTPUT_DIR, nome_arq))
         
         doc = DocxTemplate(TEMPLATE_PATH)
         doc.render(contexto)
         doc.save(caminho_final)
         
-        console.print(f"[green]Currículo gerado em: {caminho_final}[/green]")
+        log(f"[green]✅ Currículo salvo em: {caminho_final}[/green]")
         vaga.arquivo_curriculo = caminho_final
         vaga.status = "Currículo Gerado"
         session.add(vaga)
         session.commit()
 
+        # Automação
+        sucesso = False
         if vaga.site == "Gupy":
-            if typer.confirm("Deseja tentar aplicação automática via Gupy?"):
-                bot = GupyBot()
-                if bot.aplicar(vaga.link, caminho_final):
-                    vaga.status = "Candidatado"
-                    session.add(vaga)
-                    session.commit()
-                    console.print("[bold green]Aplicação finalizada![/bold green]")
+            log("[yellow]Iniciando GupyBot...[/yellow]")
+            bot = GupyBot()
+            sucesso = bot.aplicar(vaga.link, caminho_final)
+        elif vaga.site == "LinkedIn":
+            log("[yellow]Iniciando LinkedInBot...[/yellow]")
+            bot = LinkedInBot()
+            sucesso = bot.aplicar(vaga.link, caminho_final)
+        
+        if sucesso:
+            vaga.status = "Candidatado"
+            session.add(vaga)
+            session.commit()
+            log("[bold green]🚀 Candidatura finalizada com sucesso![/bold green]")
+            return True
+        
+        return False
+
+# --- COMANDOS CLI ---
+
+@app.command()
+def login(plataforma: str = typer.Argument(..., help="Plataforma para login (gupy ou linkedin)")):
+    """Abre o navegador para realizar o login manual e salvar a sessão."""
+    from playwright.sync_api import sync_playwright
+    user_data = ".sessao_gupy" if plataforma.lower() == "gupy" else ".sessao_linkedin"
+    url = "https://portal.gupy.io/" if plataforma.lower() == "gupy" else "https://www.linkedin.com/"
+    
+    console.print(f"[bold yellow]Iniciando login na {plataforma.upper()}...[/bold yellow]")
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(user_data_dir=user_data, headless=False, channel="chrome")
+        page = context.new_page()
+        page.goto(url)
+        while len(context.pages) > 0: time.sleep(1)
+    console.print(f"[bold green]Sessão salva![/bold green]")
+
+@app.command()
+def setup():
+    """Inicializa o banco de dados MySQL."""
+    create_db_and_tables()
+    console.print("[green]Banco de dados pronto![/green]")
+
+@app.command()
+def search(termo: str, local: str = "remoto", limite: int = 20):
+    """Busca novas vagas e as salva no banco de dados."""
+    setup()
+    novas = search_and_save(termo, local, True, limite)
+    console.print(f"[bold green]Sucesso![/bold green] {novas} novas vagas encontradas.")
+
+@app.command()
+def list(limit: int = 10):
+    """Lista as últimas vagas com detalhes do currículo."""
+    with get_session() as session:
+        vagas = session.exec(select(Vaga).order_by(Vaga.data_descoberta.desc()).limit(limit)).all()
+        table = Table(title="Últimas Vagas")
+        table.add_column("ID", style="cyan")
+        table.add_column("Título", style="magenta")
+        table.add_column("Empresa", style="green")
+        table.add_column("Match", style="bold yellow")
+        table.add_column("Currículo", style="dim")
+        table.add_column("Status", style="white")
+        
+        for v in vagas:
+            curr = "✅" if v.arquivo_curriculo else "❌"
+            table.add_row(str(v.id), v.titulo, v.empresa, f"{v.match_score}%", curr, v.status)
+        console.print(table)
+
+@app.command()
+def dashboard():
+    """Abre o painel interativo (TUI)."""
+    from .tui.dashboard import JobSpyDashboard
+    JobSpyDashboard().run()
+
+@app.command()
+def apply(vaga_id: int):
+    """Adapta o currículo e aplica para uma vaga."""
+    apply_logic(vaga_id)
 
 if __name__ == "__main__":
     app()
