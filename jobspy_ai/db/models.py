@@ -13,6 +13,12 @@ class Vaga(SQLModel, table=True):
     arquivo_curriculo: Optional[str] = Field(default=None, max_length=500)
     termo_pesquisa: str = Field(max_length=255)
     descricao: Optional[str] = Field(default=None, sa_column=Column(TEXT))
+    
+    # Novas colunas de Inteligência
+    match_score: Optional[int] = Field(default=0)
+    tech_stack: Optional[str] = Field(default=None, max_length=255)
+    salario_estimado: Optional[str] = Field(default=None, max_length=100)
+    justificativa: Optional[str] = Field(default=None, sa_column=Column(TEXT))
 
 class Perfil(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

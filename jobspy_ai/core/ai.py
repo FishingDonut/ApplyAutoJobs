@@ -49,6 +49,27 @@ class GeminiEngine:
         raw = self.call_with_retry(prompt)
         return self._limpar_json(raw)
 
+    def analisar_vaga(self, vaga_desc, perfil_usuario):
+        prompt = f"""
+        ANALISE A VAGA ABAIXO CONSIDERANDO O PERFIL DO CANDIDATO.
+        
+        PERFIL DO CANDIDATO:
+        {perfil_usuario}
+        
+        DESCRIÇÃO DA VAGA:
+        {vaga_desc}
+        
+        RETORNE APENAS UM JSON NO FORMATO:
+        {{
+            "match_score": (int 0-100),
+            "tech_stack": (string com as 5 principais techs separadas por vírgula),
+            "salario_estimado": (string ex: "R$ 8.000 - 12.000" ou "Não informado"),
+            "justificativa": (string curta explicando a nota)
+        }}
+        """
+        raw = self.call_with_retry(prompt)
+        return self._limpar_json(raw)
+
     def _limpar_json(self, texto):
         texto = texto.replace("```json", "").replace("```", "").strip()
         start = texto.find('{')

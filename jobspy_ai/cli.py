@@ -49,7 +49,7 @@ def search(
 
 @app.command()
 def list(limit: int = 10):
-    """Lista as últimas vagas salvas no banco de dados."""
+    """Lista as últimas vagas salvas no banco de dados com análise de match."""
     with get_session() as session:
         statement = select(Vaga).order_by(Vaga.data_descoberta.desc()).limit(limit)
         vagas = session.exec(statement).all()
@@ -58,11 +58,23 @@ def list(limit: int = 10):
         table.add_column("ID", style="cyan")
         table.add_column("Título", style="magenta")
         table.add_column("Empresa", style="green")
-        table.add_column("Site", style="yellow")
-        table.add_column("Status", style="blue")
+        table.add_column("Match (%)", style="bold yellow")
+        table.add_column("Tech Stack", style="blue")
+        table.add_column("Salário", style="green")
+        table.add_column("Status", style="white")
         
         for v in vagas:
-            table.add_row(str(v.id), v.titulo, v.empresa, v.site, v.status)
+            score = v.match_score or 0
+            match_style = "bold green" if score >= 80 else "bold yellow" if score >= 50 else "red"
+            table.add_row(
+                str(v.id), 
+                v.titulo, 
+                v.empresa, 
+                f"[{match_style}]{score}%[/]", 
+                v.tech_stack or "-",
+                v.salario_estimado or "-",
+                v.status
+            )
         
         console.print(table)
 

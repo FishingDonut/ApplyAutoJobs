@@ -10,10 +10,15 @@ import webbrowser
 class JobDetail(Static):
     """Widget para exibir os detalhes da vaga."""
     def update_job(self, vaga: Vaga):
+        match_color = "green" if vaga.match_score >= 80 else "yellow" if vaga.match_score >= 50 else "red"
         content = f"# {vaga.titulo}\n\n"
-        content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n"
-        content += f"**Status:** {vaga.status} | **Data:** {vaga.data_descoberta.strftime('%d/%m/%Y')}\n\n"
-        content += "---\n\n"
+        content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n\n"
+        content += f"### 📊 Análise de Match: [{match_color}]{vaga.match_score}%[/]\n"
+        content += f"**🛠️ Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
+        content += f"**💰 Salário:** {vaga.salario_estimado or 'Não informado'}\n\n"
+        content += f"**💡 Justificativa:** {vaga.justificativa or 'Sem análise.'}\n\n"
+        content += "---\n"
+        content += f"**Status:** {vaga.status} | **Data:** {vaga.data_descoberta.strftime('%d/%m/%Y')}\n"
         content += vaga.descricao or "Sem descrição disponível."
         self.query_one(Markdown).update(content)
 
@@ -25,7 +30,8 @@ class JobListItem(ListItem):
 
     def compose(self) -> ComposeResult:
         status_color = "blue" if self.vaga.status == "Novo" else "green" if self.vaga.status == "Candidatado" else "yellow"
-        yield Label(f"[{status_color}]{self.vaga.status:12}[/] [b]{self.vaga.titulo:40}[/] @ {self.vaga.empresa}")
+        match_color = "green" if self.vaga.match_score >= 80 else "yellow" if self.vaga.match_score >= 50 else "red"
+        yield Label(f"[{status_color}]{self.vaga.status:12}[/] [{match_color}]{self.vaga.match_score:3}%[/] [b]{self.vaga.titulo:40}[/] @ {self.vaga.empresa}")
 
 class JobSpyDashboard(App):
     """Aplicativo TUI principal."""
@@ -102,10 +108,20 @@ class JobSpyDashboard(App):
 
     def update_detail(self, vaga: Vaga) -> None:
         md = self.query_one("#detail-markdown", Markdown)
+        
+        match_color = "green" if vaga.match_score >= 80 else "yellow" if vaga.match_score >= 50 else "red"
+        
         content = f"# {vaga.titulo}\n\n"
-        content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n"
+        content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n\n"
+        
+        content += f"### 📊 Análise de Match: [{match_color}]{vaga.match_score}%[/]\n"
+        content += f"**🛠️ Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
+        content += f"**💰 Salário:** {vaga.salario_estimado or 'Não informado'}\n\n"
+        
+        content += f"**💡 Justificativa:** {vaga.justificativa or 'Sem análise.'}\n\n"
+        
+        content += "---\n"
         content += f"**Status:** {vaga.status} | **Data:** {vaga.data_descoberta.strftime('%d/%m/%Y')}\n\n"
-        content += "---\n\n"
         content += vaga.descricao or "Sem descrição disponível."
         md.update(content)
 
@@ -131,9 +147,6 @@ class JobSpyDashboard(App):
         if list_view.highlighted_child:
             vaga_id = list_view.highlighted_child.vaga.id
             self.notify(f"Iniciando aplicação para ID {vaga_id}... Feche o Dashboard para ver os logs.")
-            # Nota: Aplicação automática via TUI exigiria integração assíncrona complexa.
-            # Por enquanto, notificamos o usuário para usar o comando CLI apply para feedback detalhado.
-            # No futuro, podemos rodar o bot em uma thread separada e mostrar logs no TUI.
 
 if __name__ == "__main__":
     app = JobSpyDashboard()
