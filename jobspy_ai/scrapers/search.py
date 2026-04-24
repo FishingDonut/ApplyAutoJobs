@@ -1,5 +1,5 @@
 from jobspy import scrape_jobs
-from sqlmodel import Session, select
+from sqlmodel import Session, select, or_, and_
 from ..db.database import engine
 from ..db.models import Vaga
 from ..core.match import MatchEngine
@@ -7,9 +7,75 @@ import pandas as pd
 import json
 import os
 import time
+import re
+import requests
+from bs4 import BeautifulSoup
+
+def fetch_description_deep(url, site):
+    """
+    Tenta capturar a descrição da vaga acessando o link diretamente.
+    Implementa padrões específicos para cada plataforma (Senior Level).
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            return None
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # --- PADRÕES ESPECÍFICOS POR SITE ---
+        if site == "LinkedIn":
+            # LinkedIn Public Job Page
+            desc_el = soup.find('div', class_='description__text') or \
+                      soup.find('div', class_='show-more-less-html__markup') or \
+                      soup.find('section', class_='description')
+            if desc_el: return desc_el.get_text(separator='\n', strip=True)
+
+        elif site == "Gupy":
+            # Gupy usa classes específicas ou JSON-LD
+            desc_el = soup.find('div', {'data-testid': 'text-description'}) or \
+                      soup.find('div', class_='job-description') or \
+                      soup.find('section', class_='sc-ef08169e-3') # Classe comum dinâmica
+            if desc_el: return desc_el.get_text(separator='\n', strip=True)
+            
+            # Tenta via JSON-LD
+            script_json = soup.find('script', type='application/ld+json')
+            if script_json:
+                try:
+                    data = json.loads(script_json.string)
+                    if isinstance(data, list): data = data[0]
+                    return data.get('description')
+                except: pass
+
+        elif site == "Indeed":
+            desc_el = soup.find('div', id='jobDescriptionText') or \
+                      soup.find('div', class_='jobsearch-JobComponent-description')
+            if desc_el: return desc_el.get_text(separator='\n', strip=True)
+
+        # --- FALLBACK GENÉRICO (Lógica de Limpeza de Texto) ---
+        # Se não for nenhum dos acima, remove scripts e estilos e pega o conteúdo útil
+        for s in soup(['script', 'style', 'nav', 'header', 'footer']):
+            s.decompose()
+        
+        # Busca por containers longos de texto que provavelmente são a descrição
+        main_content = soup.find('main') or soup.find('article') or soup.find('body')
+        if main_content:
+            text = main_content.get_text(separator='\n', strip=True)
+            # Filtro simples: Se o texto for muito curto, ignoramos
+            if len(text) > 300:
+                return text
+
+    except Exception as e:
+        print(f"      [!] Falha no Deep Fetch ({site}): {e}")
+        
+    return None
 
 # Ponto de entrada do pilar de Descoberta. Coleta vagas de múltiplas fontes e salva no MySQL.
-# Implementa a lógica de evitar duplicatas e realizar o match local imediato para cada vaga.
 def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True, limite: int = 20):
     print(f"Buscando vagas para '{termo}' em '{localizacao}' (remoto={remoto})...")
     
@@ -21,14 +87,12 @@ def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True
     matcher = MatchEngine(perfil_data)
     all_jobs_list = []
     
-    # Tentamos sites individualmente para evitar que um erro 403 em um derrube a busca toda.
-    # Essa abordagem modular aumenta a resiliência do scraper contra bloqueios temporários.
-    sites_para_tentar = ["linkedin", "indeed"]
+    # Lista de sites para busca via JobSpy API
+    sites_para_tentar = ["linkedin", "indeed", "google"]
     
     for site in sites_para_tentar:
         try:
             print(f"   -> Tentando {site}...")
-            # Pequeno delay entre sites para evitar flag de bot.
             time.sleep(2)
             
             jobs = scrape_jobs(
@@ -37,7 +101,9 @@ def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True
                 location=localizacao,
                 is_remote=remoto,
                 results_wanted=max(5, limite // 2),
-                country_indeed='brazil'
+                country_indeed='brazil',
+                description_format="markdown",
+                fetch_description=True
             )
             
             if not jobs.empty:
@@ -54,32 +120,43 @@ def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True
         print("❌ Nenhuma fonte de vagas respondeu com sucesso.")
         return 0
 
-    # Consolida os DataFrames de diferentes fontes em uma única estrutura de processamento.
     full_df = pd.concat(all_jobs_list, ignore_index=True)
     novas_vagas = 0
 
     with Session(engine) as session:
         for _, row in full_df.iterrows():
-            link = row.get('job_url') or row.get('url') or ""
-            if not link: continue
+            link_original = row.get('job_url') or row.get('url') or ""
+            if not link_original: continue
 
-            # Normalização de link para evitar duplicados causados por parâmetros de rastreio (UTM).
-            # Garante que a mesma vaga não seja salva múltiplas vezes se encontrada em fontes diferentes.
-            link = str(link).split('?')[0] 
+            # Normalização de URL
+            link = str(link_original).split('?')[0].rstrip('/')
+            link = re.sub(r'https://[a-z]{2}\.linkedin\.com', 'https://www.linkedin.com', link)
 
-            statement = select(Vaga).where(Vaga.link == link)
+            titulo = str(row.get('title', 'Título não informado')).strip()
+            empresa = str(row.get('company', 'Empresa não informada')).strip()
+
+            statement = select(Vaga).where(
+                or_(
+                    Vaga.link == link,
+                    and_(Vaga.titulo == titulo, Vaga.empresa == empresa)
+                )
+            )
             existing = session.exec(statement).first()
             
             if not existing:
-                titulo = row.get('title', 'Título não informado')
-                empresa = row.get('company', 'Empresa não informada')
-                descricao = row.get('description', 'Descrição não capturada.')
-
-                print(f"   [MATCH] Analisando: {titulo[:30]}...")
                 site_origem = "Gupy" if "gupy.io" in str(link).lower() else "LinkedIn" if "linkedin.com" in str(link).lower() else "Indeed"
                 
-                # Cálculo de Match Determinístico (Local) via NLP Básico.
-                # Substitui a IA nesta etapa para garantir velocidade e cota infinita.
+                # Extração de descrição com motor de fallback por site
+                raw_desc = row.get('description')
+                if pd.isna(raw_desc) or not str(raw_desc).strip() or len(str(raw_desc)) < 150:
+                    print(f"      [DEEP FETCH] Tentando capturar descrição completa para: {titulo[:20]}...")
+                    descricao = fetch_description_deep(link, site_origem) or 'Descrição não capturada.'
+                else:
+                    descricao = str(raw_desc).strip()
+
+                print(f"   [MATCH] Analisando: {titulo[:30]}...")
+                
+                # Cálculo de Match
                 score, tech, justificativa = matcher.calcular_match(descricao)
 
                 vaga = Vaga(
