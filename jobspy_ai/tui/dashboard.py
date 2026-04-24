@@ -73,6 +73,7 @@ class JobSpyDashboard(App):
         Binding("o", "open_link", "Abrir Link", show=True),
         Binding("i", "ignore_job", "Ignorar", show=True),
         Binding("r", "refresh", "Atualizar", show=True),
+        Binding("g", "generate_resume", "Gerar Currículo", show=True),
         Binding("a", "apply_job", "Adaptar & Aplicar", show=True),
     ]
 
@@ -148,6 +149,30 @@ class JobSpyDashboard(App):
                 session.commit()
             self.log_message(f"[yellow]Vaga '{vaga.titulo}' ignorada.[/]")
             self.action_refresh()
+
+    def action_generate_resume(self) -> None:
+        list_view = self.query_one("#job-list", ListView)
+        if list_view.highlighted_child:
+            vaga = list_view.highlighted_child.vaga
+            thread = threading.Thread(target=self.run_generate_process, args=(vaga.id,))
+            thread.start()
+
+    def run_generate_process(self, vaga_id: int):
+        from ..cli import generate_resume_logic
+        import io
+        from contextlib import redirect_stdout
+
+        self.log_message(f"[bold cyan]Iniciando geração de currículo para ID {vaga_id}...[/bold cyan]")
+        
+        f = io.StringIO()
+        try:
+            with redirect_stdout(f):
+                generate_resume_logic(vaga_id, logger=self.log_message)
+            
+            self.app.call_from_thread(self.action_refresh)
+            self.log_message("[bold green]✅ Geração de currículo finalizada![/bold green]")
+        except Exception as e:
+            self.log_message(f"[bold red]❌ Erro na geração: {e}[/bold red]")
 
     def action_apply_job(self) -> None:
         list_view = self.query_one("#job-list", ListView)

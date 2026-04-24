@@ -74,19 +74,17 @@ class GeminiCliEngine(BaseAIEngine):
         return "Você é um especialista em carreiras tech."
 
     # Executa o comando do terminal e captura a saída.
-    # Usa arquivos temporários para garantir compatibilidade com prompts longos no Windows.
+    # Usa stdin para passar o prompt, evitando limites de linha de comando no Windows.
     def call_with_retry(self, prompt, max_retries=3):
+        # O prompt completo inclui a instrução de sistema e a requisição do usuário.
         full_prompt = f"{self.prompt_sistema}\n\n{prompt}"
         
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt', encoding='utf-8') as tf:
-            tf.write(full_prompt)
-            temp_path = tf.name
-
         try:
-            # Tenta rodar o comando configurado. 
-            # Se for 'gemini', o CLI deve estar no PATH.
+            # -p ativa o modo não interativo. O prompt é passado via stdin.
+            # --accept-raw-output-risk evita o banner de aviso que pode sujar o output.
             result = subprocess.run(
-                [self.cli_command, temp_path], 
+                [self.cli_command, "-p", "Siga as instruções do prompt.", "--accept-raw-output-risk"], 
+                input=full_prompt,
                 capture_output=True, 
                 text=True, 
                 encoding='utf-8',
@@ -94,24 +92,33 @@ class GeminiCliEngine(BaseAIEngine):
             )
             
             if result.returncode != 0:
-                print(f"   [ERRO CLI] Terminal retornou erro: {result.stderr.strip()}")
+                print(f"   [ERRO CLI] Terminal retornou erro ({result.returncode}): {result.stderr.strip()}")
                 return ""
 
             output = result.stdout.strip()
             
-            # Limpeza de Markdown
+            # Limpeza robusta de Markdown JSON
             if "```json" in output:
                 output = output.split("```json")[1].split("```")[0].strip()
             elif "```" in output:
-                output = output.split("```")[1].split("```")[0].strip()
+                # Caso a IA retorne apenas ``` (sem especificar json)
+                parts = output.split("```")
+                if len(parts) >= 3:
+                    output = parts[1].strip()
+                else:
+                    output = output.strip()
+            
+            # Se ainda houver texto fora do JSON, tentamos encontrar o primeiro { e o último }
+            if output and not output.startswith("{"):
+                start = output.find("{")
+                end = output.rfind("}")
+                if start != -1 and end != -1:
+                    output = output[start:end+1]
                 
             return output
         except Exception as e:
             print(f"   [ERRO CLI] Falha ao executar subprocesso: {e}")
             return ""
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
 # Fábrica para instanciar o motor de IA configurado no .env.
 # Promove o desacoplamento entre a lógica de negócio e o provedor de inteligência.

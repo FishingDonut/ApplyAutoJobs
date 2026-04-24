@@ -23,10 +23,12 @@ TEMPLATE_PATH = "templates/template-2.0.docx"
 OUTPUT_DIR = "meus_curriculos"
 PROFILE_PATH = "perfil.json"
 
+from .core.match import MatchEngine
+
 # --- LÓGICA COMPARTILHADA (CLI + TUI) ---
 
-def apply_logic(vaga_id: int, logger=None):
-    """Lógica centralizada de aplicação para ser usada pela CLI e pela TUI."""
+def generate_resume_logic(vaga_id: int, logger=None):
+    """Lógica para gerar apenas o currículo personalizado e recalcular o match."""
     def log(msg):
         if logger: logger(msg)
         else: console.print(msg)
@@ -37,7 +39,7 @@ def apply_logic(vaga_id: int, logger=None):
             log(f"[bold red]Vaga ID {vaga_id} não encontrada![/bold red]")
             return False
 
-        log(f"[yellow]Adaptando currículo para: {vaga.titulo} na {vaga.empresa}...[/yellow]")
+        log(f"[yellow]Gerando currículo personalizado para: {vaga.titulo} na {vaga.empresa}...[/yellow]")
         
         # Extrair texto do template
         if not os.path.exists(TEMPLATE_PATH):
@@ -56,11 +58,26 @@ def apply_logic(vaga_id: int, logger=None):
             return False
 
         try:
-            res_raw = res_raw.replace("```json", "").replace("```", "").strip()
+            # Tenta limpar tags de markdown se a IA ainda as retornar
+            if "```json" in res_raw:
+                res_raw = res_raw.split("```json")[1].split("```")[0].strip()
+            elif "```" in res_raw:
+                parts = res_raw.split("```")
+                if len(parts) >= 3: res_raw = parts[1].strip()
+            
+            # Garante que temos apenas o objeto JSON caso haja texto extra
+            if res_raw and not res_raw.startswith("{"):
+                start = res_raw.find("{")
+                end = res_raw.rfind("}")
+                if start != -1 and end != -1: res_raw = res_raw[start:end+1]
+
+            if not res_raw: raise ValueError("JSON vazio após processamento")
+
             dados = json.loads(res_raw)
-            contexto = dados.get('adaptacao', {})
+            contexto = dados.get('adaptacao', {}) or dados
         except Exception as e:
             log(f"[bold red]❌ Erro no JSON da IA: {e}[/bold red]")
+            log(f"[dim]Raw: {res_raw[:100]}...[/dim]")
             return False
         
         # Salvar Docx
@@ -72,11 +89,43 @@ def apply_logic(vaga_id: int, logger=None):
         doc.render(contexto)
         doc.save(caminho_final)
         
+        # Recálculo Matemático do Match
+        doc_final = Document(caminho_final)
+        texto_final = "\n".join([p.text for p in doc_final.paragraphs if p.text])
+        
+        engine = MatchEngine()
+        novo_score = engine.recalcular_match_com_curriculo(texto_final, vaga.descricao)
+        
         log(f"[green]✅ Currículo salvo em: {caminho_final}[/green]")
+        log(f"[bold cyan]📊 Match Recalculado (Matemático): {vaga.match_score}% -> {novo_score}%[/bold cyan]")
+        
         vaga.arquivo_curriculo = caminho_final
+        vaga.match_score = novo_score
         vaga.status = "Currículo Gerado"
         session.add(vaga)
         session.commit()
+        return True
+
+def apply_logic(vaga_id: int, logger=None):
+    """Lógica centralizada de aplicação para ser usada pela CLI e pela TUI."""
+    def log(msg):
+        if logger: logger(msg)
+        else: console.print(msg)
+
+    with get_session() as session:
+        vaga = session.get(Vaga, vaga_id)
+        if not vaga:
+            log(f"[bold red]Vaga ID {vaga_id} não encontrada![/bold red]")
+            return False
+
+        # Se não tiver currículo, gera um agora
+        if not vaga.arquivo_curriculo:
+            if not generate_resume_logic(vaga_id, logger):
+                return False
+            # Recarregar vaga após commit no generate_resume_logic
+            session.refresh(vaga)
+
+        caminho_final = vaga.arquivo_curriculo
 
         # Automação
         sucesso = False
@@ -153,9 +202,85 @@ def dashboard():
     JobSpyDashboard().run()
 
 @app.command()
+def generate(vaga_id: int):
+    """Apenas gera o currículo personalizado e recalcular o match."""
+    generate_resume_logic(vaga_id)
+
+@app.command()
 def apply(vaga_id: int):
-    """Adapta o currículo e aplica para uma vaga."""
+    """Adapta o currículo (se necessário) e aplica para uma vaga."""
     apply_logic(vaga_id)
+
+@app.command()
+def profile():
+    """Editor interativo de perfil para gerenciar suas habilidades e experiências."""
+    if not os.path.exists(PROFILE_PATH):
+        console.print("[yellow]Perfil não encontrado. Criando um novo...[/yellow]")
+        perfil = {
+            "dados_pessoais": {"nome_completo": "", "email": "", "telefone": "", "cidade": "", "estado": ""},
+            "preferencias": {"pretensao_salarial_clt": 0, "modelo_trabalho": ["Remoto"]},
+            "skills": "Python, SQL, Engenharia de Dados",
+            "resumo": "Desenvolvedor experiente em busca de novos desafios.",
+            "prompt_personalizado_respostas": "Seja direto e técnico."
+        }
+    else:
+        with open(PROFILE_PATH, "r", encoding="utf-8") as f:
+            perfil = json.load(f)
+
+    # Garantir campos mínimos para o MatchEngine funcionar
+    if "skills" not in perfil: perfil["skills"] = ""
+    if "resumo" not in perfil: perfil["resumo"] = ""
+
+    while True:
+        console.rule("[bold blue]JobSpy Profile Editor[/bold blue]")
+        console.print(f"[bold cyan]Nome:[/bold cyan] {perfil.get('dados_pessoais', {}).get('nome_completo', '---')}")
+        console.print(f"[bold cyan]Skills:[/bold cyan] {perfil.get('skills', '---')}")
+        console.print("-" * 30)
+        console.print("1. [bold]Dados Pessoais[/bold] (Nome, Email, Tel, Localização)")
+        console.print("2. [bold]Preferências[/bold] (Salário, Modelo de Trabalho)")
+        console.print("3. [bold]Habilidades (Skills)[/bold] [dim]- Usado para Match %[/dim]")
+        console.print("4. [bold]Resumo Profissional[/bold] [dim]- Usado para Match %[/dim]")
+        console.print("5. [bold]Prompt da IA[/bold]")
+        console.print("6. [bold]Abrir no Editor de Texto[/bold] (JSON Completo)")
+        console.print("0. [bold green]Salvar e Sair[/bold green]")
+        
+        opcao = typer.prompt("\nEscolha uma opção", default="0")
+
+        if opcao == "1":
+            dp = perfil.get("dados_pessoais", {})
+            dp["nome_completo"] = typer.prompt("Nome Completo", default=dp.get("nome_completo", ""))
+            dp["email"] = typer.prompt("Email", default=dp.get("email", ""))
+            dp["telefone"] = typer.prompt("Telefone", default=dp.get("telefone", ""))
+            dp["cidade"] = typer.prompt("Cidade", default=dp.get("cidade", ""))
+            dp["estado"] = typer.prompt("Estado", default=dp.get("estado", ""))
+            perfil["dados_pessoais"] = dp
+        elif opcao == "2":
+            pref = perfil.get("preferencias", {})
+            pref["pretensao_salarial_clt"] = float(typer.prompt("Pretensão Salarial CLT (R$)", default=str(pref.get("pretensao_salarial_clt", 0))))
+            perfil["preferencias"] = pref
+        elif opcao == "3":
+            console.print("[dim]Dica: Liste suas tecnologias separadas por vírgula para melhor precisão no Match.[/dim]")
+            perfil["skills"] = typer.prompt("Habilidades", default=perfil.get("skills", ""))
+        elif opcao == "4":
+            perfil["resumo"] = typer.prompt("Resumo Profissional", default=perfil.get("resumo", ""))
+        elif opcao == "5":
+            perfil["prompt_personalizado_respostas"] = typer.prompt("Prompt para a IA (como ela deve agir)", default=perfil.get("prompt_personalizado_respostas", ""))
+        elif opcao == "6":
+            console.print("[yellow]Abrindo arquivo JSON... Salve e feche para retornar.[/yellow]")
+            click.edit(filename=PROFILE_PATH)
+            # Recarregar após edição manual
+            try:
+                with open(PROFILE_PATH, "r", encoding="utf-8") as f:
+                    perfil = json.load(f)
+            except Exception as e:
+                console.print(f"[bold red]Erro ao ler o arquivo após edição: {e}[/bold red]")
+        elif opcao == "0":
+            break
+    
+    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+        json.dump(perfil, f, indent=2, ensure_ascii=False)
+    
+    console.print("[bold green]✅ Perfil atualizado e salvo com sucesso![/bold green]")
 
 if __name__ == "__main__":
     app()
