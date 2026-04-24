@@ -54,7 +54,7 @@ def generate_resume_logic(vaga_id: int, logger=None):
         res_raw = ai.adaptar_curriculo(vaga.descricao, texto_base)
         
         if not res_raw:
-            log("[bold red]❌ A IA não retornou dados para adaptação.[/bold red]")
+            log("[ERROR] A IA nao retornou dados para adaptacao.")
             return False
 
         try:
@@ -71,12 +71,12 @@ def generate_resume_logic(vaga_id: int, logger=None):
                 end = res_raw.rfind("}")
                 if start != -1 and end != -1: res_raw = res_raw[start:end+1]
 
-            if not res_raw: raise ValueError("JSON vazio após processamento")
+            if not res_raw: raise ValueError("JSON vazio apos processamento")
 
             dados = json.loads(res_raw)
             contexto = dados.get('adaptacao', {}) or dados
         except Exception as e:
-            log(f"[bold red]❌ Erro no JSON da IA: {e}[/bold red]")
+            log(f"[ERROR] Erro no JSON da IA: {e}")
             log(f"[dim]Raw: {res_raw[:100]}...[/dim]")
             return False
         
@@ -89,25 +89,25 @@ def generate_resume_logic(vaga_id: int, logger=None):
         doc.render(contexto)
         doc.save(caminho_final)
         
-        # Recálculo Matemático do Match
+        # Recalculo Matematico do Match
         doc_final = Document(caminho_final)
         texto_final = "\n".join([p.text for p in doc_final.paragraphs if p.text])
         
         engine = MatchEngine()
         novo_score = engine.recalcular_match_com_curriculo(texto_final, vaga.descricao)
         
-        log(f"[green]✅ Currículo salvo em: {caminho_final}[/green]")
-        log(f"[bold cyan]📊 Match Recalculado (Matemático): {vaga.match_score}% -> {novo_score}%[/bold cyan]")
+        log(f"[green][OK] Curriculo salvo em: {caminho_final}[/green]")
+        log(f"[bold cyan][MATCH] Match Recalculado (Matematico): {vaga.match_score}% -> {novo_score}%[/bold cyan]")
         
         vaga.arquivo_curriculo = caminho_final
         vaga.match_score = novo_score
-        vaga.status = "Currículo Gerado"
+        vaga.status = "Curriculo Gerado"
         session.add(vaga)
         session.commit()
         return True
 
 def apply_logic(vaga_id: int, logger=None):
-    """Lógica centralizada de aplicação para ser usada pela CLI e pela TUI."""
+    """Logica centralizada de aplicacao para ser usada pela CLI e pela TUI."""
     def log(msg):
         if logger: logger(msg)
         else: console.print(msg)
@@ -115,26 +115,26 @@ def apply_logic(vaga_id: int, logger=None):
     with get_session() as session:
         vaga = session.get(Vaga, vaga_id)
         if not vaga:
-            log(f"[bold red]Vaga ID {vaga_id} não encontrada![/bold red]")
+            log(f"[ERROR] Vaga ID {vaga_id} nao encontrada!")
             return False
 
-        # Se não tiver currículo, gera um agora
+        # Se nao tiver curriculo, gera um agora
         if not vaga.arquivo_curriculo:
             if not generate_resume_logic(vaga_id, logger):
                 return False
-            # Recarregar vaga após commit no generate_resume_logic
+            # Recarregar vaga apos commit no generate_resume_logic
             session.refresh(vaga)
 
         caminho_final = vaga.arquivo_curriculo
 
-        # Automação
+        # Automacao
         sucesso = False
         if vaga.site == "Gupy":
-            log("[yellow]Iniciando GupyBot...[/yellow]")
+            log("[INFO] Iniciando GupyBot...")
             bot = GupyBot()
             sucesso = bot.aplicar(vaga.link, caminho_final)
         elif vaga.site == "LinkedIn":
-            log("[yellow]Iniciando LinkedInBot...[/yellow]")
+            log("[INFO] Iniciando LinkedInBot...")
             bot = LinkedInBot()
             sucesso = bot.aplicar(vaga.link, caminho_final)
         
@@ -142,7 +142,7 @@ def apply_logic(vaga_id: int, logger=None):
             vaga.status = "Candidatado"
             session.add(vaga)
             session.commit()
-            log("[bold green]🚀 Candidatura finalizada com sucesso![/bold green]")
+            log("[bold green][SUCCESS] Candidatura finalizada com sucesso![/bold green]")
             return True
         
         return False
@@ -191,7 +191,7 @@ def list(limit: int = 10):
         table.add_column("Status", style="white")
         
         for v in vagas:
-            curr = "✅" if v.arquivo_curriculo else "❌"
+            curr = "[OK]" if v.arquivo_curriculo else "[EMPTY]"
             table.add_row(str(v.id), v.titulo, v.empresa, f"{v.match_score}%", curr, v.status)
         console.print(table)
 
@@ -217,8 +217,8 @@ def profile():
     if not os.path.exists(PROFILE_PATH):
         console.print("[yellow]Perfil não encontrado. Criando um novo...[/yellow]")
         perfil = {
-            "dados_pessoais": {"nome_completo": "", "email": "", "telefone": "", "cidade": "", "estado": ""},
-            "preferencias": {"pretensao_salarial_clt": 0, "modelo_trabalho": ["Remoto"]},
+            "dados_pessoais": {"nome_completo": "", "email": "", "telefone": "", "cidade": "", "estado": "", "pais": "Brasil"},
+            "preferencias": {"pretensao_salarial_clt": 0, "modelo_trabalho": ["Remoto"], "regiao_busca": "Brasil"},
             "skills": "Python, SQL, Engenharia de Dados",
             "resumo": "Desenvolvedor experiente em busca de novos desafios.",
             "prompt_personalizado_respostas": "Seja direto e técnico."
@@ -227,17 +227,20 @@ def profile():
         with open(PROFILE_PATH, "r", encoding="utf-8") as f:
             perfil = json.load(f)
 
-    # Garantir campos mínimos para o MatchEngine funcionar
+    # Garantir campos mínimos
     if "skills" not in perfil: perfil["skills"] = ""
     if "resumo" not in perfil: perfil["resumo"] = ""
+    if "preferencias" not in perfil: perfil["preferencias"] = {}
+    if "regiao_busca" not in perfil["preferencias"]: perfil["preferencias"]["regiao_busca"] = "Brasil"
 
     while True:
         console.rule("[bold blue]JobSpy Profile Editor[/bold blue]")
         console.print(f"[bold cyan]Nome:[/bold cyan] {perfil.get('dados_pessoais', {}).get('nome_completo', '---')}")
+        console.print(f"[bold cyan]Região de Busca:[/bold cyan] {perfil.get('preferencias', {}).get('regiao_busca', 'Brasil')}")
         console.print(f"[bold cyan]Skills:[/bold cyan] {perfil.get('skills', '---')}")
         console.print("-" * 30)
         console.print("1. [bold]Dados Pessoais[/bold] (Nome, Email, Tel, Localização)")
-        console.print("2. [bold]Preferências[/bold] (Salário, Modelo de Trabalho)")
+        console.print("2. [bold]Preferências[/bold] (Salário, Modelo, Região de Busca)")
         console.print("3. [bold]Habilidades (Skills)[/bold] [dim]- Usado para Match %[/dim]")
         console.print("4. [bold]Resumo Profissional[/bold] [dim]- Usado para Match %[/dim]")
         console.print("5. [bold]Prompt da IA[/bold]")
@@ -253,10 +256,12 @@ def profile():
             dp["telefone"] = typer.prompt("Telefone", default=dp.get("telefone", ""))
             dp["cidade"] = typer.prompt("Cidade", default=dp.get("cidade", ""))
             dp["estado"] = typer.prompt("Estado", default=dp.get("estado", ""))
+            dp["pais"] = typer.prompt("País", default=dp.get("pais", "Brasil"))
             perfil["dados_pessoais"] = dp
         elif opcao == "2":
             pref = perfil.get("preferencias", {})
             pref["pretensao_salarial_clt"] = float(typer.prompt("Pretensão Salarial CLT (R$)", default=str(pref.get("pretensao_salarial_clt", 0))))
+            pref["regiao_busca"] = typer.prompt("Região de Busca (Ex: Brasil, São Paulo, remoto)", default=pref.get("regiao_busca", "Brasil"))
             perfil["preferencias"] = pref
         elif opcao == "3":
             console.print("[dim]Dica: Liste suas tecnologias separadas por vírgula para melhor precisão no Match.[/dim]")

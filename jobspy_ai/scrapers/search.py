@@ -77,14 +77,32 @@ def fetch_description_deep(url, site):
 
 # Ponto de entrada do pilar de Descoberta. Coleta vagas de múltiplas fontes e salva no MySQL.
 def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True, limite: int = 20):
-    print(f"Buscando vagas para '{termo}' em '{localizacao}' (remoto={remoto})...")
+    perfil_data_raw = "{}"
+    pais_perfil = "brazil"
+    filtro_pais = "Brazil" # Para filtragem posterior no DataFrame
     
-    perfil_data = "{}"
     if os.path.exists("perfil.json"):
         with open("perfil.json", "r", encoding="utf-8") as f:
-            perfil_data = f.read()
+            data = json.load(f)
+            perfil_data_raw = json.dumps(data)
+            
+            # Se o usuário não passou um local específico, usamos a preferência do perfil
+            if localizacao == "remoto":
+                localizacao = data.get("preferencias", {}).get("regiao_busca", "Brasil")
+            
+            # Mapeamento e tradução para o motor de busca (LinkedIn/Indeed preferem inglês)
+            pais_nome = data.get("dados_pessoais", {}).get("pais", "Brasil").lower()
+            if "brasil" in pais_nome: 
+                pais_perfil = "brazil"
+                filtro_pais = "Brazil"
+                # Forçamos "Brazil" em inglês para o parâmetro location do LinkedIn
+                if localizacao.lower() == "brasil": localizacao = "Brazil"
+            elif "usa" in pais_nome or "estados unidos" in pais_nome: 
+                pais_perfil = "usa"
+                filtro_pais = "USA"
 
-    matcher = MatchEngine(perfil_data)
+    print(f"Buscando vagas para '{termo}' em '{localizacao}' (remoto={remoto}, pais={pais_perfil})...")
+    matcher = MatchEngine(perfil_data_raw)
     all_jobs_list = []
     
     # Lista de sites para busca via JobSpy API
@@ -101,14 +119,25 @@ def search_and_save(termo: str, localizacao: str = "remoto", remoto: bool = True
                 location=localizacao,
                 is_remote=remoto,
                 results_wanted=max(5, limite // 2),
-                country_indeed='brazil',
+                country_indeed=pais_perfil,
                 description_format="markdown",
                 fetch_description=True
             )
             
             if not jobs.empty:
-                print(f"      [OK] {len(jobs)} vagas encontradas no {site}.")
-                all_jobs_list.append(jobs)
+                # FILTRO DE SEGURANCA: Garante que a vaga e do pais correto
+                # O JobSpy as vezes traz vagas globais se a localizacao for muito generica.
+                if filtro_pais == "Brazil":
+                    # Aceitamos se location tiver 'Brazil', 'BR' ou estiver vazia (remoto as vezes vem vazio)
+                    # mas para LinkedIn/Indeed, geralmente 'Brazil' ou 'BR' aparece.
+                    mask = jobs['location'].str.contains('Brazil|BR|Brasil', case=False, na=True)
+                    jobs = jobs[mask]
+                
+                if not jobs.empty:
+                    print(f"      [OK] {len(jobs)} vagas validas encontradas no {site}.")
+                    all_jobs_list.append(jobs)
+                else:
+                    print(f"      [!] Vagas encontradas no {site} nao correspondem ao pais alvo.")
             else:
                 print(f"      [!] Nenhuma vaga encontrada no {site}.")
                 

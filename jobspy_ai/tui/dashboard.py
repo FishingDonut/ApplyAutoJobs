@@ -17,8 +17,8 @@ class SearchBar(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="search-container"):
             yield Label(" [bold]$ [/]BUSCAR VAGAS", id="search-label")
-            yield Input(placeholder="Termo, Localização (ex: Python, remoto)", id="search-input")
-            yield Label(" [dim]Enter para buscar • Esc para cancelar[/]", id="search-hint")
+            yield Input(placeholder="Termo, Localizacao (ex: Python, remoto)", id="search-input")
+            yield Label(" [dim]Enter para buscar . Esc para cancelar[/]", id="search-hint")
 
     def on_mount(self) -> None:
         self.query_one(Input).focus()
@@ -35,15 +35,15 @@ class JobDetail(Static):
         match_color = "green" if vaga.match_score >= 80 else "yellow" if vaga.match_score >= 50 else "red"
         content = f"# {vaga.titulo}\n\n"
         content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n\n"
-        content += f"### 📊 Análise de Match: [{match_color}]{vaga.match_score}%[/]\n"
-        content += f"**🛠️ Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
-        content += f"**💰 Salário:** {vaga.salario_estimado or 'Não informado'}\n\n"
-        content += f"**💡 Justificativa:** {vaga.justificativa or 'Sem análise.'}\n\n"
+        content += f"### [MATCH] Analise de Match: [{match_color}]{vaga.match_score}%[/]\n"
+        content += f"**[STACK] Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
+        content += f"**[SALARIO] Salario:** {vaga.salario_estimado or 'Nao informado'}\n\n"
+        content += f"**[INFO] Justificativa:** {vaga.justificativa or 'Sem analise.'}\n\n"
         content += "---\n"
         if vaga.arquivo_curriculo:
-            content += f"**📄 Currículo Gerado:** `{vaga.arquivo_curriculo}`\n\n"
+            content += f"**[DOC] Curriculo Gerado:** `{vaga.arquivo_curriculo}`\n\n"
         content += f"**Status:** {vaga.status} | **Data:** {vaga.data_descoberta.strftime('%d/%m/%Y')}\n"
-        content += vaga.descricao or "Sem descrição disponível."
+        content += vaga.descricao or "Sem descricao disponivel."
         self.query_one(Markdown).update(content)
 
 class JobListItem(ListItem):
@@ -162,7 +162,7 @@ class JobSpyDashboard(App):
         """Alterna a ordenação entre ID e Match."""
         self.current_sort = "match" if self.current_sort == "id" else "id"
         sort_name = "Match %" if self.current_sort == "match" else "ID (Mais Recentes)"
-        self.log_message(f"[bold cyan]🔄 Ordenação alterada para: {sort_name}[/]")
+        self.log_message(f"[bold cyan][SORT] Ordenacao alterada para: {sort_name}[/]")
         self.action_refresh()
 
     def action_filter_platform(self) -> None:
@@ -173,7 +173,7 @@ class JobSpyDashboard(App):
         self.current_platform_filter = platforms[next_idx]
         
         filter_name = self.current_platform_filter if self.current_platform_filter else "Todas"
-        self.log_message(f"[bold cyan]🔄 Filtro alterado para: {filter_name}[/]")
+        self.log_message(f"[bold cyan][FILTER] Filtro alterado para: {filter_name}[/]")
         self.action_refresh()
 
     def action_refresh(self, filter_term: str = None) -> None:
@@ -215,12 +215,12 @@ class JobSpyDashboard(App):
 
         content = f"# {vaga.titulo}\n\n"
         content += f"**Empresa:** {vaga.empresa} | **Plataforma:** {vaga.site}\n\n"
-        content += f"### 📊 Análise de Match: [{match_color}]{vaga.match_score}%[/]\n"
-        content += f"**🛠️ Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
-        content += f"**💰 Salário:** {vaga.salario_estimado or 'Não informado'}\n\n"
-        content += f"**💡 Justificativa:** {vaga.justificativa or 'Sem análise.'}\n\n"
+        content += f"### [MATCH] Analise de Match: [{match_color}]{vaga.match_score}%[/]\n"
+        content += f"**[STACK] Tech Stack:** {vaga.tech_stack or 'N/A'}\n"
+        content += f"**[SALARIO] Salario:** {vaga.salario_estimado or 'Nao informado'}\n\n"
+        content += f"**[INFO] Justificativa:** {vaga.justificativa or 'Sem analise.'}\n\n"
         content += "---\n"
-        content += vaga.descricao or "Sem descrição disponível."
+        content += vaga.descricao or "Sem descricao disponivel."
         md.update(content)
 
     def action_open_link(self) -> None:
@@ -248,7 +248,7 @@ class JobSpyDashboard(App):
         if not search_term:
             return
 
-        self.log_message(f"[bold cyan]🔍 Buscando '{search_term}'...[/]")
+        self.log_message(f"[bold cyan][SEARCH] Buscando '{search_term}'...[/]")
 
         def do_search():
             from ..scrapers.search import search_and_save
@@ -259,11 +259,11 @@ class JobSpyDashboard(App):
                 local = partes[1].strip() if len(partes) > 1 else "remoto"
 
                 novas = search_and_save(termo, local, True, 20)
-                self.app.call_from_thread(self.log_message, f"[bold green]✅ Fim: {novas} novas vagas.[/]")
+                self.app.call_from_thread(self.log_message, f"[bold green][OK] Fim: {novas} novas vagas.[/]")
                 # Após a busca, atualizamos a lista filtrando pelo termo para mostrar os resultados
                 self.app.call_from_thread(self.action_refresh, filter_term=termo)
             except Exception as e:
-                self.app.call_from_thread(self.log_message, f"[bold red]❌ Erro: {e}[/]")
+                self.app.call_from_thread(self.log_message, f"[bold red][ERROR] {e}[/]")
 
         threading.Thread(target=do_search, daemon=True).start()
 
@@ -285,5 +285,5 @@ class JobSpyDashboard(App):
             apply_logic(vaga_id, logger=self.log_message)
             self.app.call_from_thread(self.action_refresh)
         except Exception as e:
-            self.log_message(f"[bold red]❌ Erro: {e}[/]")
+            self.log_message(f"[bold red][ERROR] {e}[/]")
 
